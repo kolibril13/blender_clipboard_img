@@ -5,6 +5,7 @@ import os
 import numpy as np
 from PIL import Image
 import pyperclipimg as pci
+import bpy_extras.view3d_utils
 
 # Configuration constants
 NODE_MARGIN = -50 #  -65 #-50 would be good as well, more padding
@@ -84,6 +85,71 @@ def capture_node_area(context):
     crop = im.crop((int(x1), int(y1t), int(x2), int(y2t)))
     return crop, None
 
+def capture_viewport_screenshot(context):
+    """Capture the current viewport as an image."""
+    # Find window region
+    region = None
+    for r in context.area.regions:
+        if r.type == 'WINDOW':
+            region = r
+            break
+    
+    if not region:
+        return None, "Viewport window region not found"
+
+    # Check if there are selected objects
+    selected_objects = [obj for obj in context.selected_objects if obj.type == 'MESH']
+    if not selected_objects:
+        return None, "No mesh objects selected"
+
+    # Take a full-region screenshot to temp file
+    tmp = os.path.join(bpy.app.tempdir, "viewport_screenshot.png")
+    override = context.copy()
+    override["region"] = region
+    
+    with context.temp_override(**override):
+        bpy.ops.screen.screenshot_area(filepath=tmp)
+
+    # Open the image
+    im = Image.open(tmp)
+    
+    # Calculate bounding box of selected objects in screen space
+    bmin = Vector((1e8, 1e8))
+    bmax = Vector((-1e8, -1e8))
+    
+    for obj in selected_objects:
+        # Get object bounds in world space
+        if obj.bound_box:
+            for corner in obj.bound_box:
+                # Transform corner to world space
+                world_corner = obj.matrix_world @ Vector(corner)
+                # Project to screen space
+                screen_coord = bpy_extras.view3d_utils.location_3d_to_region_2d(region, context.space_data.region_3d, world_corner)
+                if screen_coord:
+                    bmin.x = min(bmin.x, screen_coord.x)
+                    bmin.y = min(bmin.y, screen_coord.y)
+                    bmax.x = max(bmax.x, screen_coord.x)
+                    bmax.y = max(bmax.y, screen_coord.y)
+    
+    # Add padding
+    padding = 50  # pixels
+    bmin -= Vector((padding, padding))
+    bmax += Vector((padding, padding))
+    
+    # Clamp to image bounds
+    bmin.x = max(0, bmin.x)
+    bmin.y = max(0, bmin.y)
+    bmax.x = min(im.width, bmax.x)
+    bmax.y = min(im.height, bmax.y)
+    
+    # Flip Y coordinate for PIL (origin at top-left)
+    y1 = im.height - bmax.y
+    y2 = im.height - bmin.y
+    
+    # Crop the image
+    crop = im.crop((int(bmin.x), int(y1), int(bmax.x), int(y2)))
+    return crop, None
+
 class NODE_OT_copy_to_clipboard(Operator):
     """Copy selected nodes to clipboard as an image."""
     
@@ -115,8 +181,41 @@ class NODE_OT_copy_to_clipboard(Operator):
             self.report({'ERROR'}, f"Failed to copy to clipboard: {str(e)}")
             return {'CANCELLED'}
 
+class VIEW3D_OT_copy_viewport_to_clipboard(Operator):
+    """Copy current viewport to clipboard as an image."""
+    
+    bl_idname = "view3d.copy_viewport_to_clipboard"
+    bl_label = "Copy viewport to clipboard as image"
+    bl_description = "Copy current viewport to clipboard as image"
+    bl_options = {'REGISTER'}
+
+    @classmethod
+    def poll(cls, context):
+        return (
+            context.space_data and 
+            context.space_data.type == 'VIEW_3D' and
+            pci is not None
+        )
+
+    def execute(self, context):
+        screenshot, error = capture_viewport_screenshot(context)
+        if error:
+            self.report({'ERROR'}, error)
+            return {'CANCELLED'}
+
+        # Copy image to clipboard
+        try:
+            pci.copy(screenshot)
+            self.report({'INFO'}, "Viewport image copied to clipboard")
+            return {'FINISHED'}
+        except Exception as e:
+            self.report({'ERROR'}, f"Failed to copy to clipboard: {str(e)}")
+            return {'CANCELLED'}
+
 def register():
     bpy.utils.register_class(NODE_OT_copy_to_clipboard)
+    bpy.utils.register_class(VIEW3D_OT_copy_viewport_to_clipboard)
 
 def unregister():
+    bpy.utils.unregister_class(VIEW3D_OT_copy_viewport_to_clipboard)
     bpy.utils.unregister_class(NODE_OT_copy_to_clipboard)
