@@ -7,7 +7,7 @@ from PIL import Image
 import pyperclipimg as pci
 
 # Configuration constants
-NODE_MARGIN = -4
+NODE_MARGIN = -50 #  -65 #-50 would be good as well, more padding
 NODE_EXTRA_HEIGHT = 0
 
 def compute_selected_bounds(context, margin):
@@ -47,7 +47,6 @@ def compute_selected_bounds(context, margin):
         bmax + Vector((margin, margin))
     )
 
-
 def capture_node_area(context):
     """Capture the selected node area as an image."""
     # Find window region
@@ -84,10 +83,6 @@ def capture_node_area(context):
 
     crop = im.crop((int(x1), int(y1t), int(x2), int(y2t)))
     return crop, None
-
-
-
-
 
 class NODE_OT_copy_to_clipboard(Operator):
     """Copy selected nodes to clipboard as an image."""
